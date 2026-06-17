@@ -804,7 +804,7 @@ var csActiveName = null;  // selected role name string
    (see functions/cheatsheet-api/index.js — Access-Control-Allow-Origin: *).
 ─────────────────────────────────────────────────────────────────────────── */
 var CS_API = 'https://pricing-calculator-916648406.development.catalystserverless.com/server/cheatsheet-api';
-var CS_KEY = 'nss-cheatsheet-7Qx3v9Kp2Lr8';  // must match WIDGET_KEY in cheatsheet-api (sent as X-Widget-Key)
+var CS_KEY = 'nss-cheatsheet-7Qx3v9Kp2Lr8';  // must match WIDGET_KEY in cheatsheet-api (sent in the POST body)
 
 /* ─── Seniority button activation ─── */
 function setActiveTier(tier, applyDefaults) {
@@ -1064,7 +1064,7 @@ window.addEventListener('resize', function() {
 
 function csLoad() {
   csSetStatus('Loading salary data…');
-  fetch(CS_API, { headers: { 'X-Widget-Key': CS_KEY } })
+  fetch(CS_API)
     .then(function(r) { return r.json(); })
     .then(function(res) {
       if (!res.success) throw new Error(res.error || 'API error');
@@ -1210,6 +1210,7 @@ function csIncrementCounter() {
   var payload = {
     Role:      csActiveName,
     Seniority: TIER_LABEL[activeTier],
+    key:       CS_KEY,   // shared key travels in the body (keeps the POST preflight-free)
   };
   if (!csActiveRow) {          // brand-new role → seed its salary range from the sliders
     payload.MinSalary = parseInt(document.getElementById('sl-low').value);
@@ -1217,7 +1218,7 @@ function csIncrementCounter() {
   }
   fetch(CS_API + '/upsert', {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json', 'X-Widget-Key': CS_KEY },
+    headers: { 'Content-Type': 'text/plain' },   // text/plain → CORS "simple" → no preflight
     body: JSON.stringify(payload),
   })
     .then(function(r) { return r.json(); })
@@ -1230,10 +1231,12 @@ function csIncrementCounter() {
     .catch(function(e) { console.warn('[CheatSheet] upsert failed:', e); });
 }
 
-/* Resets the cheat sheet UI and re-renders pills for the current tier */
+/* Resets the cheat-sheet UI for the current tier. KEEPS csActiveName so a role
+   chosen before a seniority change is still recorded on save — only the stale
+   row reference + visible UI are cleared. (Clearing csActiveName here was why
+   changing seniority dropped the role and no /upsert fired.) */
 function csRefresh() {
   csActiveRow  = null;
-  csActiveName = null;
   document.getElementById('cs-result').hidden  = true;
   document.getElementById('cs-warning').hidden = true;
   document.getElementById('cs-search').value   = '';
