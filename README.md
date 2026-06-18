@@ -55,7 +55,10 @@ in page source — not true auth. See `../nessteams-pricing-backend/README.md`.
 Role + Seniority pair is new (salary seeded from the sliders) or bumping its
 `Counter` if it exists. A typed role with no match shows a "+ Use new role"
 option in the search box; salary is only sent for brand-new roles so existing
-curated ranges aren't overwritten.
+curated ranges aren't overwritten. The selected role survives seniority changes
+(`csRefresh` no longer clears `csActiveName`). Unlike the wizard, this build's
+`saveToCRM` uses `updateRecord`, whose promise resolves normally — no save
+timeout workaround needed.
 
 Currently the **development** environment only. See `../legacy/HANDOFF.md` for
 promoting to production and `../MEMORY.md` for project context.
