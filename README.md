@@ -1,91 +1,76 @@
-# Pricing Button for Zoho CRM
+# Pricing Button — Zoho CRM widget
 
-Zoho CRM widget (Sigma extension) — the **Pricing Simulator for Zoho CRM** for a
-**Custom Button on an existing Deal** record.
+A Zoho CRM embedded widget (Sigma extension) that computes client-facing deal
+pricing for an **existing** deal. It opens from a custom button on a Deal record,
+loads the record's current values, and writes the recomputed pricing back to the
+same record.
 
-This is one of two sibling projects under `Pricing Calculator for Zoho CRM/`:
-
-| Project | Launch context | Reads inputs via | Writes outputs via | Status text |
-|---------|----------------|------------------|--------------------|-------------|
-| **zohocrm-pricing-button** (this one) | Custom Button on an **existing** Deal | `ZOHO.CRM.API.getRecord` | `ZOHO.CRM.API.updateRecord` | "Connected to Zoho CRM" |
-| zohocrm-pricing-wizard | Wizard during record **creation** (no record yet) | `PageLoad` payload (`readWizardField`) | `ZOHO.CRM.WIZARD.post` | "Connected to Wizard" |
-
-> The two `widget.html` files are **identical except** the CRM read/write layer.
-> This build uses `getRecord`/`updateRecord` against a real record id resolved
-> from the `PageLoad` payload (`resolveEntityId`). If no record id is present it
-> falls back to **Manual Mode** (it does not try to write to a wizard form).
+This is one of two UI variants of the same pricing engine. The
+[Wizard widget](../zohocrm-pricing-wizard) is the other; they share all pricing
+and cheat-sheet logic and differ only in how they read from and write to the CRM.
 
 ## What it does
-Opened from a button on an existing Deal, it loads the record's current
-`Salary_Low`/`Salary_High`/`Seniority`/`Job_Role`, lets the user adjust seniority
-and salary range with sliders, computes client prices, and writes the values
-back to the same record on Save.
 
-- **Reads / writes** (Deals module): `Salary_Low`, `Salary_High`, `Seniority`,
-  `Seat_Cost_Min`, `Seat_Cost_Max`, `Job_Role`. `Deal_Name` is the job title /
-  cheat-sheet lookup key.
+1. **Reads** the deal's current salary band, seniority, and job role from the
+   record (via `ZOHO.CRM.API.getRecord`, using the record id from the launch
+   payload).
+2. **Prices** the role live as the rep adjusts seniority and the salary/margin
+   sliders.
+3. **Writes** the salary band and seat-cost min/max back to the same record on
+   save (via `ZOHO.CRM.API.updateRecord`).
+4. **Suggests** typical salary ranges by querying the shared backend "cheat sheet."
 
-## Pricing formula (do not change without intent)
-- `MULT = 1.35` — cost multiplier (salary + Panama employer taxes/fees).
-- `price = r125(salary * 1.35 + max(marginDollars, TIER_FLOORS[tier]))`
-- `r125(v) = Math.ceil(v / 125) * 125` — rounds **up** to nearest 125.
-- `TIER_FLOORS` is currently a **flat 1000** for all tiers (business decision
-  2026-06-16); per-tier values are kept in the code for easy reinstatement.
+If the widget is ever opened without a resolvable record id, it falls back to a
+read-only **Manual Mode** (calculate only, no write).
+
+## Pricing
+
+```
+cost  = salary × MULT                   // grosses salary up to true employer cost
+price = roundUpTo125( cost + margin )    // margin floored per seniority tier
+```
+
+- `MULT` grosses a salary up to its real cost (salary + employer taxes/fees).
+- `margin` is the rep's target but is clamped to a per-seniority minimum, so a role
+  can't be accidentally underpriced.
+- Prices round **up** to the nearest 125, and the effective margin % is shown back
+  to the rep as a sanity check.
 
 ## Backend dependency
-Calls the Catalyst `cheatsheet-api` Advanced I/O function (Node 20) for role
-lookups and usage counts. `CS_API` in `widget.html` points at the **absolute**
-Catalyst URL (required because the widget is served from `*.zappsusercontent.com`):
 
-```
-https://YOUR-PROJECT.catalystserverless.com/server/cheatsheet-api
-```
+Calls the companion [Catalyst backend](../zohocrm-pricing-backend) for role lookups
+and usage counts. Because the widget is served cross-origin from Zoho's widget
+host, `CS_API` in `widget.html` is an **absolute** URL to the function, and writes
+carry a shared key **in the request body** (not a header) to stay within the
+browser's CORS "simple request" rules — see the backend README for the full
+reasoning. Set `CS_API` and `CS_KEY` in `widget.html` before packaging.
 
-**Access key.** Writes are gated by a shared key sent **in the request body**
-(`{ key: CS_KEY }`), with `Content-Type: text/plain` so the call stays CORS
-"simple" and avoids an OPTIONS preflight (Catalyst's gateway doesn't return CORS
-headers on preflights → a header-based key would block the request entirely).
-`CS_KEY` is a constant in `widget.html` and **must match `WIDGET_KEY`** in
-`../zohocrm-pricing-backend/functions/cheatsheet-api/index.js` (current value
-`REPLACE_WITH_YOUR_SHARED_KEY`). Obscurity-level protection — the key is visible
-in page source — not true auth. See `../zohocrm-pricing-backend/README.md`.
-
-**Writes on save.** The save button calls `POST /upsert` with
-`{ Role, Seniority, MinSalary?, MaxSalary? }` — creating the role if the
-Role + Seniority pair is new (salary seeded from the sliders) or bumping its
-`Counter` if it exists. A typed role with no match shows a "+ Use new role"
-option in the search box; salary is only sent for brand-new roles so existing
-curated ranges aren't overwritten. The selected role survives seniority changes
-(`csRefresh` no longer clears `csActiveName`). Unlike the wizard, this build's
-`saveToCRM` uses `updateRecord`, whose promise resolves normally — no save
-timeout workaround needed.
-
-Currently the **development** environment only. See `../legacy/HANDOFF.md` for
-promoting to production and `../MEMORY.md` for project context.
+> Unlike the Wizard variant, this build writes through a normal record API whose
+> promise resolves cleanly, so it needs no save-timeout workaround.
 
 ## Build & deploy
-This is a standard Zoho ZET scaffold. From this folder:
+
+Standard Zoho ZET widget. From this folder:
 
 ```
 zet pack
-powershell -ExecutionPolicy Bypass -File .\fix-zip.ps1
+powershell -ExecutionPolicy Bypass -File ./fix-zip.ps1
 ```
 
-`zet pack` produces `dist/extension.zip` but deliberately omits
-`plugin-manifest.json`; `fix-zip.ps1` injects it back in. Then upload
-`dist/extension.zip` at <https://sigma.zoho.com> and wire it to a Custom Button
-on the Deals module.
+`zet pack` produces `dist/extension.zip` but omits `plugin-manifest.json`;
+`fix-zip.ps1` injects it back in. Upload `dist/extension.zip` at
+<https://sigma.zoho.com> and wire it to a custom button on the Deals module.
 
-> **Index Page must be `/widget.html`** (NOT `/app/widget.html`) — Zoho roots
-> the server inside `app/`, so the `/app` prefix would 404.
+> The widget's Index Page must be `/widget.html` (not `/app/widget.html`) — Zoho
+> serves from inside `app/`, so the `/app` prefix would 404.
 
-## Files
+## Layout
+
 ```
-plugin-manifest.json        { "service": "CRM" }
-app/widget.html             the widget (button-adapted)
+app/widget.html          widget UI + logic (button variant)
 app/favicon.png
 app/translations/en.json
-package.json, server/       local ZET dev server (not shipped to Sigma)
-fix-zip.ps1                 post-pack manifest injection
-cert.pem, key.pem           local dev HTTPS certs
+plugin-manifest.json      { "service": "CRM" }
+package.json, server/     local ZET dev server (not shipped to Sigma)
+fix-zip.ps1               post-pack manifest injection
 ```
